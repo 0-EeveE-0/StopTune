@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StopTune</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>StopTune</h1>
+  <p class="intro">A continuous reference tone with precise pitch and footage controls.</p>
+
+  <section class="console wide">
+    <div class="readout">
+      <span id="note">A4</span>
+      <span id="freq">440.00 Hz</span>
+      <span id="stopName">8′</span>
+    </div>
+    <div class="play-row">
+      <button id="play" class="primary">▶ Start tone</button>
+      <span class="status"><span id="dot" class="dot"></span><span id="statusText">Tone off</span></span>
+    </div>
+
+    <div class="control-grid">
+      <div class="control-block pitch-block">
+        <h2>Semitones</h2>
+        <div class="note-buttons">
+          <button id="downNote" aria-label="Lower by one semitone" title="Lower by one semitone"><span class="full-label">− Semitone</span><span class="compact-label">−1</span></button>
+          <button id="upNote" aria-label="Raise by one semitone" title="Raise by one semitone"><span class="full-label">+ Semitone</span><span class="compact-label">+1</span></button>
+        </div>
+        <div class="octave-buttons">
+          <button id="downOct" aria-label="Lower by one octave">− Octave</button>
+          <button id="upOct" aria-label="Raise by one octave">+ Octave</button>
+        </div>
+        <div class="select-row">
+          <label class="field">Note
+            <select id="noteSelect"></select>
+          </label>
+          <label class="field octave-field">Octave
+            <select id="octaveSelect"></select>
+          </label>
+        </div>
+      </div>
+
+      <div class="control-block cents-block">
+        <h2>Fine tune</h2>
+        <div class="fine">
+          <label for="cents">Cents</label>
+          <span id="centsValue">0 cents</span>
+        </div>
+        <input id="cents" type="range" min="-100" max="100" value="0" step="1" aria-label="Fine tune in cents">
+        <div class="cents-buttons">
+          <button id="minusCent" aria-label="Lower by one cent">−1</button>
+          <button id="resetCents">Reset</button>
+          <button id="plusCent" aria-label="Raise by one cent">+1</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-row">
+      <label class="field waveform-field">Waveform
+        <select id="waveform">
+          <option value="sine" selected>Sine wave</option>
+          <option value="organ">Organ — richer harmonics</option>
+        </select>
+      </label>
+      <div class="volume-control">
+        <div class="volume-line">
+          <label for="volume">Volume</label>
+          <span id="volumeValue">100%</span>
+        </div>
+        <input id="volume" type="range" min="0" max="100" value="100">
+      </div>
+    </div>
+    <p class="hint">Use the semitone buttons for quick pitch changes and the slider or ±1 buttons for fine tuning. 100 cents = 1 semitone.</p>
+  </section>
+
+  <section class="stops-section">
+      <h2>Footage / harmonics</h2>
+      <div id="stops" class="stops">
+        <button class="stop" data-ratio="0.5" data-name="16′"><strong>16′</strong><small>½ × 8′</small></button>
+        <button class="stop selected" data-ratio="1" data-name="8′"><strong>8′</strong><small>1 × 8′</small></button>
+        <button class="stop" data-ratio="1.5" data-name="5⅓′"><strong>5⅓′</strong><small>3/2 × 8′</small></button>
+        <button class="stop" data-ratio="2" data-name="4′"><strong>4′</strong><small>2 × 8′</small></button>
+        <button class="stop" data-ratio="3" data-name="2⅔′"><strong>2⅔′</strong><small>3 × 8′</small></button>
+        <button class="stop" data-ratio="4" data-name="2′"><strong>2′</strong><small>4 × 8′</small></button>
+        <button class="stop" data-ratio="5" data-name="1⅗′"><strong>1⅗′</strong><small>5 × 8′</small></button>
+        <button class="stop" data-ratio="6" data-name="1⅓′"><strong>1⅓′</strong><small>6 × 8′</small></button>
+        <button class="stop" data-ratio="8" data-name="1′"><strong>1′</strong><small>8 × 8′</small></button>
+      </div>
+      <p class="hint">Footage changes the frequency relative to the selected 8′ pitch. Only one tone is generated at a time.</p>
+  </section>
+  <p class="footer">Audio is generated locally in your browser using the Web Audio API. No server or internet connection is required.</p>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const names = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
+  const noteSelect = document.getElementById("noteSelect");
+  const octaveSelect = document.getElementById("octaveSelect");
+  const noteDisplay = document.getElementById("note");
+  const freqDisplay = document.getElementById("freq");
+  const stopNameDisplay = document.getElementById("stopName");
+  const centsSlider = document.getElementById("cents");
+  const centsValue = document.getElementById("centsValue");
+  const volumeSlider = document.getElementById("volume");
+  const volumeValue = document.getElementById("volumeValue");
+  const waveformSelect = document.getElementById("waveform");
+  const playButton = document.getElementById("play");
+  const dot = document.getElementById("dot");
+  const statusText = document.getElementById("statusText");
+
+  names.forEach((name, i) => {
+    const option = document.createElement("option");
+    option.value = String(i);
+    option.textContent = name;
+    noteSelect.appendChild(option);
+  });
+  for (let octave = 0; octave <= 8; octave++) {
+    const option = document.createElement("option");
+    option.value = String(octave);
+    option.textContent = String(octave);
+    octaveSelect.appendChild(option);
+  }
+
+  // Default pitch: A4 = 440 Hz.
+  let midi = 69;
+  let stopRatio = 1;
+  let stopName = "8′";
+  let audioContext = null;
+  let oscillator = null;
+  let gainNode = null;
+  let playing = false;
+
+  function noteFrequency(midiNote) {
+    const cents = Number(centsSlider.value);
+    return 440 * Math.pow(2, (midiNote - 69 + cents / 100) / 12);
+  }
+  function selectedNoteName() {
+    const pitch = ((midi % 12) + 12) % 12;
+    const octave = Math.floor(midi / 12) - 1;
+    return names[pitch] + octave;
+  }
+  function applyWaveform() {
+    if (!oscillator || !audioContext) return;
+    if (waveformSelect.value === "sine") {
+      // A pure sine wave has no additional harmonics.
+      oscillator.setPeriodicWave(audioContext.createPeriodicWave(
+        new Float32Array([0, 0]),
+        new Float32Array([0, 1]),
+        { disableNormalization: false }
+      ));
+    } else {
+      // A richer organ-like tone with progressively softer harmonics.
+      const real = new Float32Array(9);
+      const imag = new Float32Array(9);
+      imag[1] = 1.0;
+      imag[2] = 0.30;
+      imag[3] = 0.16;
+      imag[4] = 0.08;
+      imag[5] = 0.045;
+      imag[6] = 0.025;
+      imag[7] = 0.015;
+      imag[8] = 0.01;
+      oscillator.setPeriodicWave(audioContext.createPeriodicWave(real, imag, { disableNormalization: false }));
+    }
+  }
+  function updateReadout() {
+    const baseFreq = noteFrequency(midi);
+    const freq = baseFreq * stopRatio;
+    noteDisplay.textContent = selectedNoteName();
+    freqDisplay.textContent = freq.toFixed(2) + " Hz";
+    stopNameDisplay.textContent = "x" + stopName;
+    noteSelect.value = String(((midi % 12) + 12) % 12);
+    octaveSelect.value = String(Math.max(0, Math.min(8, Math.floor(midi / 12) - 1)));
+    const cents = Number(centsSlider.value);
+    centsValue.textContent = (cents > 0 ? "+" : "") + cents + (Math.abs(cents) === 1 ? " cent" : " cents");
+    if (oscillator && audioContext) {
+      oscillator.frequency.setTargetAtTime(freq, audioContext.currentTime, 0.025);
+    }
+  }
+  function setPlayingState(on) {
+    playing = on;
+    playButton.textContent = on ? "■ Stop tone" : "▶ Start tone";
+    playButton.classList.toggle("primary", !on);
+    dot.classList.toggle("on", on);
+    statusText.textContent = on ? "Tone playing" : "Tone off";
+  }
+  async function startAudio() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      alert("This browser does not support the Web Audio API. Try a current version of Chrome, Firefox, or Edge.");
+      return;
+    }
+    if (!audioContext) {
+      audioContext = new AudioContextClass();
+      oscillator = audioContext.createOscillator();
+      gainNode = audioContext.createGain();
+
+      oscillator.type = "sine";
+      oscillator.frequency.value = noteFrequency(midi) * stopRatio;
+      applyWaveform();
+      gainNode.gain.value = Number(volumeSlider.value) / 100 * 0.18;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.start();
+    }
+    if (audioContext.state === "suspended") await audioContext.resume();
+    setPlayingState(true);
+    updateReadout();
+  }
+  async function stopAudio() {
+    if (audioContext && audioContext.state !== "closed") {
+      try { await audioContext.close(); } catch (_) {}
+    }
+    audioContext = null;
+    oscillator = null;
+    gainNode = null;
+    setPlayingState(false);
+  }
+  function setMidi(value) {
+    midi = Math.max(12, Math.min(119, value));
+    updateReadout();
+  }
+
+  playButton.addEventListener("click", () => playing ? stopAudio() : startAudio());
+  document.getElementById("downNote").addEventListener("click", () => setMidi(midi - 1));
+  document.getElementById("upNote").addEventListener("click", () => setMidi(midi + 1));
+  document.getElementById("downOct").addEventListener("click", () => setMidi(midi - 12));
+  document.getElementById("upOct").addEventListener("click", () => setMidi(midi + 12));
+  noteSelect.addEventListener("change", () => {
+    const octave = Math.floor(midi / 12) - 1;
+    setMidi((octave + 1) * 12 + Number(noteSelect.value));
+  });
+  octaveSelect.addEventListener("change", () => {
+    setMidi((Number(octaveSelect.value) + 1) * 12 + ((midi % 12) + 12) % 12);
+  });
+  centsSlider.addEventListener("input", updateReadout);
+  waveformSelect.addEventListener("change", applyWaveform);
+  document.getElementById("minusCent").addEventListener("click", () => {
+    centsSlider.value = Math.max(-100, Number(centsSlider.value) - 1); updateReadout();
+  });
+  document.getElementById("plusCent").addEventListener("click", () => {
+    centsSlider.value = Math.min(100, Number(centsSlider.value) + 1); updateReadout();
+  });
+  document.getElementById("resetCents").addEventListener("click", () => {
+    centsSlider.value = 0; updateReadout();
+  });
+  volumeSlider.addEventListener("input", () => {
+    const volume = Number(volumeSlider.value);
+    volumeValue.textContent = volume + "%";
+    if (gainNode && audioContext) gainNode.gain.setTargetAtTime(volume / 100 * 0.18, audioContext.currentTime, 0.025);
+  });
+  document.querySelectorAll(".stop").forEach(button => {
+    button.addEventListener("click", () => {
+      stopRatio = Number(button.dataset.ratio);
+      stopName = button.dataset.name;
+      document.querySelectorAll(".stop").forEach(other => other.classList.toggle("selected", other === button));
+      updateReadout();
+    });
+  });
+  updateReadout();
+})();
+</script>
+</body>
+</html>
